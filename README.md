@@ -8,7 +8,7 @@ Transpoly automates the workflow from a single-chain protein structure to a pack
 
 # What you will need
 - A .pdb file for a single chain
-- Can use CHARMM-GUI's polymer builder (https://pubs.acs.org/doi/10.1021/acs.jctc.1c00169) for obtaining a polymer chain 
+- Can use CHARMM-GUI's polymer builder (https://pubs.acs.org/doi/10.1021/acs.jctc.1c00169) for obtaining a single polymer chain 
 - If you want to simulate a crosslinked matrix, obtain a non-crosslinked chain from CHARMM-GUI and manually add crosslinking atoms on the single chain using tools like Avogadro (https://avogadro.cc/)
 
 # User inputs
