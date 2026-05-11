@@ -1,5 +1,5 @@
 # Transpoly
-<img width="1536" height="1024" alt="image" src="https://github.com/user-attachments/assets/fd208124-82b1-40eb-959c-fb1edfb61b46" />
+**<img width="1536" height="1024" alt="image" src="https://github.com/user-attachments/assets/fd208124-82b1-40eb-959c-fb1edfb61b46" />**
 
 A reproducible molecular simulation pipeline for polymer/salt systems.
 
