@@ -98,12 +98,104 @@ class SolvationStage:
     
     def _create_ion_gro(self, path: Path, resname: str, atom_name: str) -> None:
         """Create a minimal .gro file for a single ion."""
-        content = f"""{atom_name} ion
-     1
-     1{resname:>5s}{atom_name:>5s}    1    0.000    0.000    0.000
-   1.0   1.0   1.0
-"""
+        content = (
+            f"{atom_name} ion\n"
+            f"    1\n"
+            f"{1:5d}{resname:<5}{atom_name:>5}{1:5d}{0.0:8.3f}{0.0:8.3f}{0.0:8.3f}\n"
+            f"   0.00000   0.00000   0.00000\n"
+        )
         write_file(path, content)
+
+    def build_solvent_only_box(
+        self,
+        box_x_nm: float,
+        box_y_nm: float,
+        box_z_nm: float,
+        n_k: int,
+        n_cl: int,
+    ) -> tuple[Path, Path]:
+        """Build a solvent-only TIP4P box with ions and write a summary."""
+        self.logger.info("="*60)
+        self.logger.info("SOLVENT-ONLY BUILD STAGE")
+        self.logger.info("="*60)
+
+        seed_gro = self.stage_dir / "seed.gro"
+        topol_top = self.stage_dir / "topol.top"
+        solvated_gro = self.stage_dir / "solvated.gro"
+
+        write_file(
+            seed_gro,
+            """Pure water and ions seed
+    1
+    1DUM    DUM    1   0.000   0.000   0.000
+   0.00000   0.00000   0.00000
+""",
+        )
+        write_file(
+            topol_top,
+            """#include "oplsaa.ff/forcefield.itp"
+#include "oplsaa.ff/tip4p.itp"
+#include "oplsaa.ff/ions.itp"
+
+[ system ]
+Pure water and ions box
+
+[ molecules ]
+SOL     0
+K       0
+CL      0
+""",
+        )
+
+        self._create_ion_gro(self.stage_dir / "K_single.gro", "K", "K")
+        self._create_ion_gro(self.stage_dir / "CL_single.gro", "CL", "CL")
+
+        box_gro = self.stage_dir / "box.gro"
+        run_command(
+            f"gmx_mpi editconf -f {seed_gro.name} -o {box_gro.name} -box {box_x_nm:.3f} {box_y_nm:.3f} {box_z_nm:.3f} -bt triclinic",
+            self.stage_dir,
+            self.logger,
+            description="editconf solvent-only box",
+        )
+
+        run_command(
+            f"gmx_mpi solvate -cp {box_gro.name} -cs tip4p.gro -o solv.gro -p {topol_top.name}",
+            self.stage_dir,
+            self.logger,
+            description="solvate solvent-only box",
+        )
+
+        system_k = self.stage_dir / "solv_k.gro"
+        system_kcl = self.stage_dir / "solv_kcl.gro"
+        run_command(
+            f"gmx_mpi insert-molecules -f solv.gro -ci K_single.gro -nmol {n_k} -radius 0.08 -o {system_k.name}",
+            self.stage_dir,
+            self.logger,
+            description="insert K ions",
+        )
+        run_command(
+            f"gmx_mpi insert-molecules -f {system_k.name} -ci CL_single.gro -nmol {n_cl} -radius 0.08 -o {system_kcl.name}",
+            self.stage_dir,
+            self.logger,
+            description="insert Cl ions",
+        )
+
+        if solvated_gro.exists():
+            solvated_gro.unlink()
+        solvated_gro.write_text(system_kcl.read_text(encoding="utf-8"), encoding="utf-8")
+
+        summary = self.stage_dir / "summary.txt"
+        write_file(
+            summary,
+            f"""Solvent-only build complete.
+Box (nm): {box_x_nm:.3f} {box_y_nm:.3f} {box_z_nm:.3f}
+Inserted K ions: {n_k}
+Inserted Cl ions: {n_cl}
+Output GRO: {solvated_gro.name}
+""",
+        )
+
+        return solvated_gro, topol_top
     
     def create_ionized_topology(
         self,

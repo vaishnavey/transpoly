@@ -9,6 +9,7 @@ from .parameterize import ParameterizeStage
 from .packing import PackingStage
 from .gromacs_prep import GromacsPrepStage
 from .solvation import SolvationStage
+from .solvent_only import SolventOnlyStage
 from .equilibration import EquilibrationStage
 from .production import ProductionStage
 
@@ -24,6 +25,9 @@ class TranspolyPipeline:
         self.logger = setup_logger("transpoly", self.output_dir)
         self.logger.info("TranspolyPipeline initialized")
         self.logger.info(f"Output directory: {self.output_dir}")
+
+    def _is_solvent_only(self) -> bool:
+        return self.config.workflow_mode.strip().lower() in {"solvent_only", "water_only", "solvent", "build_only"}
     
     def run_parameterization(self) -> tuple[Path, str]:
         """Run parameterization stage."""
@@ -107,6 +111,19 @@ class TranspolyPipeline:
         self.logger.info("="*70)
         
         try:
+            if self._is_solvent_only():
+                self.logger.info("Workflow mode: solvent_only")
+                stage = SolventOnlyStage(self.config, self.output_dir, self.logger)
+                stage.build_and_run()
+                self.logger.info("="*70)
+                self.logger.info("PIPELINE COMPLETED SUCCESSFULLY")
+                self.logger.info("="*70)
+                self.logger.info(f"Results in: {self.output_dir}")
+                return
+
+            if not self.config.single_chain_pdb:
+                raise ValueError("single_chain_pdb is required for polymer workflow mode")
+
             # 1. Parameterize
             self.logger.info("\n[1/6] Parameterization")
             pdb_input = Path(self.config.single_chain_pdb)

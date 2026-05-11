@@ -1,8 +1,9 @@
 """
 Utility functions: logging, file I/O, subprocess management, checkpointing.
 """
-import subprocess
 import logging
+import os
+import subprocess
 from pathlib import Path
 from typing import Optional, Tuple
 import sys
@@ -48,7 +49,8 @@ def run_command(
     cwd: Path,
     logger: logging.Logger,
     check: bool = True,
-    description: str = ""
+    description: str = "",
+    env: Optional[dict[str, str]] = None,
 ) -> Tuple[int, str, str]:
     """
     Run a shell command and return (returncode, stdout, stderr).
@@ -69,12 +71,23 @@ def run_command(
     logger.debug(f"CWD: {cwd}")
     
     cwd.mkdir(parents=True, exist_ok=True)
+    run_env = os.environ.copy()
+    if env:
+        run_env.update(env)
+    tmp_dir = cwd / "tmp"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    run_env.setdefault("TMPDIR", str(tmp_dir))
+    run_env.setdefault("TMP", str(tmp_dir))
+    run_env.setdefault("TEMP", str(tmp_dir))
+    run_env.setdefault("OMPI_MCA_orte_tmpdir_base", str(tmp_dir))
+    run_env.setdefault("OMPI_MCA_shmem_mmap_enable_nfs_warning", "0")
     
     try:
         result = subprocess.run(
             cmd,
             shell=True,
             cwd=str(cwd),
+            env=run_env,
             capture_output=True,
             text=True,
             check=False
@@ -93,6 +106,8 @@ def run_command(
         
         return result.returncode, result.stdout, result.stderr
     
+    except subprocess.CalledProcessError:
+        raise
     except Exception as e:
         logger.error(f"Exception running command: {e}")
         raise

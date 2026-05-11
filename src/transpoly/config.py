@@ -10,7 +10,8 @@ from typing import Optional
 @dataclass
 class SimulationConfig:
     """Core simulation parameters."""
-    single_chain_pdb: str
+    workflow_mode: str = "polymer"
+    single_chain_pdb: Optional[str] = None
     n_chains: Optional[int] = None
     target_density: Optional[float] = None
     box_x: float = 30.0  # angstrom
@@ -92,6 +93,7 @@ class SimulationConfig:
 
 # Defaults
 DEFAULT_CONFIG = SimulationConfig(
+    workflow_mode="polymer",
     single_chain_pdb="chain.pdb",
     n_chains=50,
     box_x=30.0,
