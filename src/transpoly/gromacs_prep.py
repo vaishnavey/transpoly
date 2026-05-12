@@ -4,7 +4,7 @@ GROMACS preparation: MDP generation, topology setup, conversions.
 import logging
 import random
 from pathlib import Path
-from .utils import run_command, write_file, timestamp
+from .utils import run_command, write_file, timestamp, checkpoint_file
 from .config import SimulationConfig
 
 
@@ -20,6 +20,9 @@ class GromacsPrepStage:
     
     def generate_mdp_files(self, resname: str) -> None:
         """Generate all required .mdp files."""
+        if checkpoint_file(self.stage_dir / "em_sd.mdp", "Generate MDP files", self.logger):
+            return
+        
         T = self.config.temperature
         
         # Energy minimization - steepest descent (restrained)
@@ -241,6 +244,9 @@ gen_vel                 = no
         # NVT production
         prod_steps = int((self.config.prod_time * 1000) / 2)  # dt=2fs
         random_seed = random.randint(1, 2**31 - 1)
+        energy_groups = f"K CL SOL {resname}"
+        if self.config.nh4cl_count > 0:
+            energy_groups = f"{energy_groups} NH4P"
         write_file(
             self.stage_dir / "nvt_prod.mdp",
             f"""title                   = NVT production ({self.config.prod_time} ps)
@@ -269,6 +275,9 @@ vdwtype                 = Cut-off
 rvdw                    = 1.0
 pbc                     = xyz
 
+; Energy groups for ion interaction analysis
+energygrps              = {energy_groups}
+
 tcoupl                  = v-rescale
 tc-grps                 = System
 tau_t                   = 0.5
@@ -290,11 +299,27 @@ gen_vel                 = no
     ) -> Path:
         """Create polymer ITP file from acpype output."""
         gmx_itp = acpype_dir / f"{resname}_GMX.itp"
-        if not gmx_itp.exists():
-            raise FileNotFoundError(f"No ITP file found in {acpype_dir}")
-        
         poly_itp = self.stage_dir / "POLY.itp"
-        
+
+        # If the canonical ITP from acpype isn't present, try to locate any ITP in the provided directory
+        if not gmx_itp.exists():
+            itp_candidates = list(acpype_dir.glob("*.itp")) if acpype_dir.exists() else []
+            # prefer file containing the residue name
+            chosen = None
+            for p in itp_candidates:
+                if resname.lower() in p.name.lower():
+                    chosen = p
+                    break
+            if not chosen and itp_candidates:
+                chosen = itp_candidates[0]
+            if chosen:
+                gmx_itp = chosen
+            else:
+                raise FileNotFoundError(f"No ITP file found in {acpype_dir} or {acpype_dir} contains no .itp files")
+
+        if checkpoint_file(poly_itp, "Create polymer ITP with posre", self.logger):
+            return poly_itp
+
         # Read original ITP
         original_content = gmx_itp.read_text()
         
