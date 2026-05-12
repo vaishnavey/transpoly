@@ -1,0 +1,9 @@
+tolerance 2.0
+filetype pdb
+output packed_box.pdb
+nloop 200
+
+structure pahga_half.pdb
+  number 50
+  inside box 0.0 0.0 0.0 30.0 30.0 90.0
+end structure

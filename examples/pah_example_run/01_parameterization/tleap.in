@@ -1,0 +1,6 @@
+source leaprc.gaff2
+mol = loadmol2 pahga_half_gaff2.mol2
+loadamberparams pahga_half_gaff2.frcmod
+saveamberparm mol pahga_half.prmtop pahga_half.inpcrd
+savepdb mol pahga_half_tleap.pdb
+quit
