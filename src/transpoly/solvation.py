@@ -16,6 +16,14 @@ class SolvationStage:
         self.logger = logger
         self.stage_dir = output_dir / "04_solvation"
         self.stage_dir.mkdir(parents=True, exist_ok=True)
+
+    def _resolve_asset(self, configured_path: str) -> Path:
+        """Resolve asset path from absolute path or repository root."""
+        p = Path(configured_path)
+        if p.is_absolute():
+            return p
+        repo_root = Path(__file__).resolve().parents[2]
+        return repo_root / configured_path
     
     def prepare_system_box(self, packed_pdb: Path, resname: str) -> Path:
         """Convert PDB to GRO with box dimensions."""
@@ -53,10 +61,10 @@ class SolvationStage:
         system_gro: Path,
         resname: str,
         topol_top: Path
-    ) -> tuple[Path, int, int]:
+    ) -> tuple[Path, int, int, int]:
         """
-        Add K+ and Cl- ions using gmx insert-molecules.
-        Returns (system_with_ions, n_k, n_cl)
+        Add 5x KCl and 5x NH4Cl style ions using gmx insert-molecules.
+        Returns (system_with_ions, n_k, n_cl, n_nh4)
         """
         
         # Calculate ion counts
@@ -66,11 +74,12 @@ class SolvationStage:
         n_kcl = self.config.kcl_count
         n_nh4cl = self.config.nh4cl_count
         
-        # For now, use direct counts. Can expand to neutralization logic.
-        n_k = n_kcl + n_nh4cl  # K+ from both sources
-        n_cl = n_kcl + 2 * n_nh4cl  # Cl- to neutralize
+        # Explicit salt stoichiometry
+        n_k = n_kcl
+        n_nh4 = n_nh4cl
+        n_cl = n_kcl + n_nh4cl
         
-        self.logger.info(f"Adding ions: K+ ({n_k}), Cl- ({n_cl})")
+        self.logger.info(f"Adding ions: K+ ({n_k}), NH4+ ({n_nh4}), Cl- ({n_cl})")
         
         # Create single ion .gro files
         self._create_ion_gro(self.stage_dir / "K_single.gro", "K", "K")
@@ -84,17 +93,34 @@ class SolvationStage:
                 f"-ci K_single.gro -nmol {n_k} -radius 0.08 -o {system_k_gro.name}"
             )
             run_command(cmd, self.stage_dir, self.logger, description="Insert K+ ions")
+
+        # Add NH4+ ions from template GRO
+        nh4_template = self._resolve_asset(self.config.ammonium_gro)
+        if not nh4_template.exists():
+            raise FileNotFoundError(f"Missing ammonium GRO template: {nh4_template}")
+        nh4_stage = self.stage_dir / "NH4_single.gro"
+        if not nh4_stage.exists():
+            import shutil
+            shutil.copy(nh4_template, nh4_stage)
+
+        system_k_nh4_gro = self.stage_dir / "system_k_nh4.gro"
+        if not checkpoint_file(system_k_nh4_gro, "Add NH4+ ions", self.logger):
+            cmd = (
+                f"gmx_mpi insert-molecules -f {system_k_gro.name} "
+                f"-ci {nh4_stage.name} -nmol {n_nh4} -radius 0.12 -o {system_k_nh4_gro.name}"
+            )
+            run_command(cmd, self.stage_dir, self.logger, description="Insert NH4+ ions")
         
         # Add Cl- ions
         system_kcl_gro = self.stage_dir / "system_kcl.gro"
         if not checkpoint_file(system_kcl_gro, "Add Cl- ions", self.logger):
             cmd = (
-                f"gmx_mpi insert-molecules -f {system_k_gro.name} "
+                f"gmx_mpi insert-molecules -f {system_k_nh4_gro.name} "
                 f"-ci CL_single.gro -nmol {n_cl} -radius 0.08 -o {system_kcl_gro.name}"
             )
             run_command(cmd, self.stage_dir, self.logger, description="Insert Cl- ions")
         
-        return system_kcl_gro, n_k, n_cl
+        return system_kcl_gro, n_k, n_cl, n_nh4
     
     def _create_ion_gro(self, path: Path, resname: str, atom_name: str) -> None:
         """Create a minimal .gro file for a single ion."""
@@ -203,14 +229,17 @@ Output GRO: {solvated_gro.name}
         resname: str,
         n_polymer: int,
         n_k: int,
-        n_cl: int
+        n_cl: int,
+        n_nh4: int
     ) -> Path:
         """Create topology file for ionized system."""
         topol_ions = self.stage_dir / "topol_ions.top"
         
         content = f"""#include "oplsaa.ff/forcefield.itp"
 #include "POLY.itp"
+#include "oplsaa.ff/tip4p.itp"
 #include "oplsaa.ff/ions.itp"
+#include "ammonium.itp"
 
 [ system ]
 {resname} packed box with ions
@@ -218,12 +247,54 @@ Output GRO: {solvated_gro.name}
 [ molecules ]
 {resname}   {n_polymer}
 K     {n_k}
+NH4P  {n_nh4}
 CL    {n_cl}
+    SOL   0
 """
         
         write_file(topol_ions, content)
         self.logger.info(f"Created ionized topology: {topol_ions}")
         return topol_ions
+
+    @staticmethod
+    def _count_solvent_molecules(gro_path: Path) -> int:
+        """Count SOL residues in a GRO file."""
+        residue_ids = set()
+        with open(gro_path, encoding="utf-8") as handle:
+            for line in handle.readlines()[2:-1]:
+                if len(line) >= 10 and line[5:10].strip() == "SOL":
+                    residue_ids.add(line[:5].strip())
+        return len(residue_ids)
+
+    @staticmethod
+    def _rewrite_topology(topol_path: Path, n_solvent: int, n_k: int, n_cl: int, n_nh4: int) -> None:
+        """Rewrite the molecule counts after solvation."""
+        lines = topol_path.read_text(encoding="utf-8").splitlines()
+        new_lines = []
+        in_molecules = False
+        for line in lines:
+            stripped = line.strip()
+            if stripped.lower() == "[ molecules ]":
+                in_molecules = True
+                new_lines.append(line)
+                continue
+            if in_molecules and stripped and not stripped.startswith(";"):
+                parts = stripped.split()
+                if parts:
+                    if parts[0] == "K":
+                        new_lines.append(f"K     {n_k}")
+                        continue
+                    if parts[0] == "CL":
+                        new_lines.append(f"CL    {n_cl}")
+                        continue
+                    if parts[0] == "NH4P":
+                        new_lines.append(f"NH4P  {n_nh4}")
+                        continue
+                    if parts[0] == "SOL":
+                        new_lines.append(f"SOL   {n_solvent}")
+                        continue
+            new_lines.append(line)
+        topol_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
     
     def solvate(self, system_kcl_gro: Path, topol_ions: Path) -> Path:
         """Solvate with TIP4P water."""
@@ -281,20 +352,30 @@ CL    {n_cl}
         acpype_itp = acpype_dir / f"{resname}_GMX.itp"
         if acpype_itp.exists():
             shutil.copy(acpype_itp, self.stage_dir / acpype_itp.name)
+
+        # Copy ammonium topology file
+        ammonium_itp = self._resolve_asset(self.config.ammonium_itp)
+        if not ammonium_itp.exists():
+            raise FileNotFoundError(f"Missing ammonium ITP file: {ammonium_itp}")
+        shutil.copy(ammonium_itp, self.stage_dir / "ammonium.itp")
         
         # Prepare system
         system_gro = self.prepare_system_box(packed_pdb, resname)
         
         # Add ions
-        system_kcl_gro, n_k, n_cl = self.add_ions(system_gro, resname, None)
+        system_kcl_gro, n_k, n_cl, n_nh4 = self.add_ions(system_gro, resname, None)
         
         # Create topology
         topol_ions = self.create_ionized_topology(
-            None, resname, n_polymer, n_k, n_cl
+            None, resname, n_polymer, n_k, n_cl, n_nh4
         )
         
         # Solvate
         solvated_gro = self.solvate(system_kcl_gro, topol_ions)
+
+        n_solvent = self._count_solvent_molecules(solvated_gro)
+        self._rewrite_topology(topol_ions, n_solvent, n_k, n_cl, n_nh4)
+        self.logger.info(f"Updated topology with SOL {n_solvent}")
         
         self.logger.info("Solvation complete")
         return solvated_gro, topol_ions
