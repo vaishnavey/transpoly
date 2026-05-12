@@ -1,0 +1,10 @@
+============================================================
+ION DIFFUSIVITY SUMMARY
+============================================================
+
+Ion: K
+  Diffusivity (from MSD): 4.0185e-05 nm²/ps
+
+Ion: Cl
+  Diffusivity (from MSD): 2.9392e-05 nm²/ps
+
