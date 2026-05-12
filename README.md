@@ -32,7 +32,7 @@ See [docs/SETUP.md](docs/SETUP.md) for environment setup and [docs/USAGE.md](doc
 
 1. **Parameterization**: Convert single-chain PDB to Amber topology using GAFF2
 2. **Packing**: Fill simulation box with multiple chains using Packmol
-3. **GROMACS Prep**: Convert to GROMACS with OPLS-AA force field
+3. **GROMACS Prep**: Convert to GROMACS with OPLS-AA/AMBER99sb-ildn force field
 4. **Solvation & Ions**: Add water (TIP4P), KCl, NH4Cl, and neutralize
 5. **Equilibration**: Multistage equilibration (EM → NVT → NPT)
 6. **Production**: 10 ns NVT ensemble dynamics
