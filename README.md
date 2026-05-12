@@ -22,7 +22,7 @@ See [docs/SETUP.md](docs/SETUP.md) for environment setup and [docs/USAGE.md](doc
 
 ## Requirements
 
-- AmberTools (antechamber, parmchk2, tleap)
+- AmberTools (antechamber, parmchk2, tleap): can also use _ab initio_ MD / DFT (Density Functional Theory calculations) output files 
 - GROMACS
 - Packmol
 - Acpype
