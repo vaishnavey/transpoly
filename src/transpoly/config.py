@@ -21,6 +21,12 @@ class SimulationConfig:
     # Ion counts
     kcl_count: int = 5
     nh4cl_count: int = 5
+    ammonium_itp: str = "ammonium.itp"
+    ammonium_gro: str = "NH4.gro"
+
+    # Replicate controls
+    independent_runs: bool = False
+    independent_run_count: int = 5
     
     # Temperature and pressure
     temperature: int = 300  # K
